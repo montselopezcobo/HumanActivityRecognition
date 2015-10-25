@@ -1,0 +1,142 @@
+---
+title: 'Course project for the Machine Learning class: Human activity recognition'
+author: "Montserrat López Cobo"
+date: "25/10/2015"
+output: html_document
+---
+
+### Introduction
+
+In this project, I try to predict the quality of performance of barbell lifts correctly and incorrectly in 5 different ways. I use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. More information is available from the website http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). I will use the *rpart* and *randomForest* packages.
+
+
+```{r, echo=FALSE, eval=TRUE, cache=TRUE}
+setwd("~/coursera/00_Assignments/08_Machine_Learning")
+if (!file.exists("./CourseProject1")) {dir.create("./CourseProject1")}
+setwd("./CourseProject1")
+if (!file.exists("./Data")) {dir.create("./Data")}
+if (!file.exists("./Output")) {dir.create("./Output")}
+
+
+#--- Libraries ---------
+# require(rpart)
+# require(randomForest)
+
+
+#--- Download the files —————
+if (!file.exists("./Data/pml-training.csv")) {
+      fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+      download.file(fileUrl, destfile = "./Data/pml-training.csv", method = "curl")
+      dateDownloaded <- date()
+      save(dateDownloaded, file = "./Data/dateDownloaded_train.txt")
+}
+
+if (!file.exists("./Data/pml-testing.csv")) {
+      fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+      download.file(fileUrl, destfile = "./Data/pml-testing.csv", method = "curl")
+      dateDownloaded <- date()
+      save(dateDownloaded, file = "./Data/dateDownloaded_test.txt")
+}
+
+#--- Reading files ------------
+if (!file.exists("./Data/train_original.RData")) {
+train_original <- read.csv("./Data/pml-training.csv", na.strings = c("NA", "#DIV/0!"))
+save("train_original", file="./Data/train_original.RData")
+} else {
+      load("./Data/train_original.RData")     
+}
+if (!file.exists("./Data/test_original.RData")) {
+test_original <- read.csv("./Data/pml-testing.csv", na.strings = c("NA", "#DIV/0!"))
+save("test_original", file="./Data/test_original.RData")
+} else {
+      load("./Data/test_original.RData")     
+}
+
+trainALL <- train_original[ ,!colSums(is.na(train_original)) >= sum(train_original$new_window == "no")]
+# max(colSums(is.na(trainALL)))
+
+#--- Delete ID variables: from X to new_window
+#    (When trying a TREE algorith, the only classification variable was X)
+
+trainALL <- trainALL[,-c(1:7)]
+
+#--- SPLIT TRAIN_ORIGINAL INTO TRAIN AND TEST (FOR VALIDATION)
+set.seed(100)
+inTrain <- sample(1:nrow(trainALL), 0.7*nrow(trainALL))
+train <- trainALL[ inTrain,]
+valid <- trainALL[-inTrain,]
+
+```
+
+###Description of data
+
+The original data from the project include a data set with `r dim(train_original)[1]` cases and a test set with `r dim(test_original)[1]` cases. The train set has `r dim(train_original)[2]` variables, 5 of which can be considered as identification variables relating to the case id, participant id and date and time of the exercise, and 2 variables referring to the window (data from sensors have been recorded using sliding windows of 0.5 to 2.5 seconds). Those 5 id variables are deleted to avoid them from influencing the model. Another 100 variables correspond to derived values from the sensor measurements (skewness, average, max, min, etc.), these variables are populated only in the cases corresponding to **new windows** . Therefore, these derived variables have missing data in around 98% of cases. I delete these variables and the "window-related" variables, already useless. The class variable, “classe", has 5 possible outcomes, one for each of the ways in which the weight lift is performed.
+After this first step, the train set has `r dim(trainALL)[1]` cases and 53 variables.
+
+###Data slicing
+
+Since the sample size is not small, I split the train set into train (70%) and validation set (30%). Thus, I will not conduct cross-validation, but validation on this 30% of the original training set.
+
+###Fitting the model
+
+This is a classification problem, I will use classification trees and random forest using the *rpart* and *randomForest* packages respectively.
+
+####*1. Classification Tree*
+
+I fit a classification tree model:
+```{r echo=TRUE, eval=FALSE}
+modelTREE1 <- rpart(classe~., train)
+```
+
+```{r, echo=FALSE, eval=TRUE, cache=TRUE, tidy=TRUE}
+modelTREE1 <- rpart(classe~., train)
+# modelTREE1
+```
+
+I estimate in-sample-error as the proportion of miss-classified cases over total cases, i.e., those out of the diagonal of the confusion Matrix.
+
+```{r, echo=TRUE, eval=TRUE, cache=TRUE}
+ConfMatTREE1 <-as.matrix(table(train$classe, predict(modelTREE1, train, type="vector")))
+ISerrorTREE1 <- sum(ConfMatTREE1)/sum(diag(ConfMatTREE1))-1
+```
+I get miss-classification rate of `r paste0(round(ISerrorTREE1*100,2), "%")`.
+
+In a prior attempt to use classification trees, I found perfect classification in the training set, due to the use of the variable X (identification of the case, or row number) as only predictor. Consequently I decided to delete the identification variables from the train set as described above. 
+Before further exploring the possibilities of classification trees, I will try a random forest algorithm.
+
+####*2. Random Forest*
+```{r, echo=TRUE, eval=TRUE, cache=TRUE, tidy=TRUE}
+modelRF1 <- randomForest(classe ~., train, importance=TRUE)
+modelRF1
+```
+The out-of-sample estimate of error rate is `r paste0(round(modelRF1$err.rate[modelRF1$ntree]*100, 2), "%")`. The random forest algorithm includes in built cross-validation, since it creates `r modelRF1$ntree` trees with subsamples (resamples with replacement) leaving out around one third of the sample size for each tree, which is later used for cross-validation. That is why the algorithm provides an estimation of OOB or out-of-sample estimate of error rate.
+
+**Tuning the model**
+
+I could choose to tune the model by selecting the most important features, identified thanks to the parameter *importance=TRUE* and the *varImpPlot* function. For example, the following code selects the 12 most important features and plug them into a new version of the model.
+
+```{r, echo=TRUE, eval=TRUE, tidy=TRUE, cache=TRUE}
+varImpPlot(modelRF1, n.var=12, main="Variable importance for modelRF1")
+selectedFeatures <- c("yaw_belt", "roll_belt", "pitch_belt", "magnet_dumbbell_z", "pitch_forearm", 
+                      "magnet_dumbbell_y", "gyros_arm_y", "accel_dumbbell_y", "roll_arm", "magnet_belt_x",
+                      "gyros_dumbbell_x", "magnet_forearm_z")
+modelRF1b <- randomForest(classe ~., train[,c("classe", selectedFeatures)], importance=TRUE)
+```
+
+By doing this we gain in speed and loose in accuracy. Now the estimated out-of-sample error rate provided by *randomForest* is `r paste0(round(modelRF1b$err.rate[modelRF1b$ntree]*100, 2), "%")`. Therefore, I decide to keep the original random forest model.
+
+###Out of sample error estimate: prediction on the validation test
+
+I get an independent out-of-sample estimate of error rate by applying the model to the validation set.
+
+```{r, echo=TRUE, eval=TRUE, tidy=TRUE, cache=TRUE}
+predictionConfMatRF1 <-as.matrix(table(valid$classe, predict(modelRF1, valid)))
+OOSerrorRF1 <- sum(predictionConfMatRF1)/sum(diag(predictionConfMatRF1))-1
+predictionConfMatRF1
+```
+
+The estimated out-of-sample error rate in the validation set is `r paste0(round(OOSerrorRF1*100, 2), "%")`, a bit higher than the estimated by *randomForest*, but still very low.
+
+The final step is to pass the model to the test set, which produces correct classification in the 20 cases.
+
+
