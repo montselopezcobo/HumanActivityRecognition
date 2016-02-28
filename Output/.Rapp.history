@@ -1,0 +1,3 @@
+load("/Users/Mon/coursera/00_Assignments/08_Machine_Learning/HumanActivityRecognition/Output/modelRF1.rds")
+load("/Users/Mon/coursera/00_Assignments/08_Machine_Learning/HumanActivityRecognition/Output/modelRF1.rds")
+q()
