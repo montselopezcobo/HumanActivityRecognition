@@ -1,0 +1,186 @@
+---
+title: 'Course project for the Machine Learning class: Human activity recognition'
+author: "Montserrat López Cobo"
+date: "26/02/2016"
+output: html_document
+---
+
+### Introduction
+
+In this project, I try to predict the quality of performance of barbell lifts correctly and incorrectly in 5 different ways. I use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. More information is available from the website http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+
+```{r, echo=FALSE, eval=TRUE, cache=TRUE}
+setwd("~/coursera/00_Assignments/08_Machine_Learning")
+if (!file.exists("./CourseProject1_2016")) {dir.create("./CourseProject1_2016")}
+setwd("./CourseProject1_2016")
+if (!file.exists("./Data")) {dir.create("./Data")}
+if (!file.exists("./Output")) {dir.create("./Output")}
+
+
+#--- Libraries ---------
+# require(rpart)
+# require(randomForest)
+# require(caret)
+
+
+#--- Download the files —————
+if (!file.exists("./Data/pml-training.csv")) {
+      fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+      download.file(fileUrl, destfile = "./Data/pml-training.csv", method = "curl")
+      dateDownloaded <- date()
+      save(dateDownloaded, file = "./Data/dateDownloaded_train.txt")
+}
+
+if (!file.exists("./Data/pml-testing.csv")) {
+      fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+      download.file(fileUrl, destfile = "./Data/pml-testing.csv", method = "curl")
+      dateDownloaded <- date()
+      save(dateDownloaded, file = "./Data/dateDownloaded_test.txt")
+}
+
+#--- Reading files ------------
+if (!file.exists("./Data/train_original.RData")) {
+train_original <- read.csv("./Data/pml-training.csv", na.strings = c("NA", "#DIV/0!"))
+save("train_original", file="./Data/train_original.RData")
+} else {
+      load("./Data/train_original.RData")     
+}
+if (!file.exists("./Data/test_original.RData")) {
+test_original <- read.csv("./Data/pml-testing.csv", na.strings = c("NA", "#DIV/0!"))
+save("test_original", file="./Data/test_original.RData")
+} else {
+      load("./Data/test_original.RData")     
+}
+
+trainALL <- train_original[ ,!colSums(is.na(train_original)) >= sum(train_original$new_window == "no")]
+# max(colSums(is.na(trainALL)))
+# [1] 0 # All NA have been removed
+
+#--- Delete ID variables: from X to new_window
+#    (When trying a TREE algorith, the only classification variable was X)
+
+trainALL <- trainALL[,-c(1:7)]
+
+#--- SPLIT TRAIN_ORIGINAL INTO TRAIN AND TEST (FOR VALIDATION)
+set.seed(200)
+inTrain = sample(1:nrow(trainALL), 0.7*nrow(trainALL))
+train = trainALL[ inTrain,]
+valid = trainALL[-inTrain,]
+
+# transform "classe" into a factor variable
+train$classe <- as.factor(train$classe)
+valid$classe <- as.factor(valid$classe)
+```
+
+###Description of data
+
+The original data from the project include a data set with `r dim(train_original)[1]` cases and a test set with `r dim(test_original)[1]` cases. The train set has `r dim(train_original)[2]` variables, 5 of which can be considered as identification variables relating to the case id, participant id and date and time of the exercise, and 2 variables referring to the window (data from sensors have been recorded using sliding windows of 0.5 to 2.5 seconds). Those 7 variables are deleted to avoid them from influencing the model. Another 100 variables correspond to derived values from the sensor measurements (skewness, average, max, min, etc.), these variables are populated only in the cases corresponding to **new windows** . Therefore, these derived variables have missing data in around 98% of cases. I delete these variables too. The class variable, “classe", has 5 possible outcomes, one for each of the ways in which the weight lift is performed during the experiment.
+After this first step, the reduced train set has `r dim(trainALL)[1]` cases and `r dim(trainALL)[2]` variables.
+
+###Data slicing
+
+Since the sample size is not small, I split the train set into train (70%) and validation set (30%). Thus, I will not conduct cross-validation, but validation on this 30% of the original training set. I also transform the *classe* variable into a factor variable.
+
+###Fitting the model
+
+This is a classification problem, I will use classification trees and random forest using the *rpart* and *randomForest* packages respectively.
+
+
+####*1. Classification Tree*
+
+I fit a classification tree model:
+```{r echo=TRUE, eval=FALSE}
+set.seed(999)
+modelTREE1 <- rpart(classe~., train)
+```
+
+```{r, echo=FALSE, eval=TRUE, cache=TRUE, tidy=TRUE}
+set.seed(999)
+if (!file.exists("./Output/modelTREE1.rds")) {
+      modelTREE1 <- rpart(classe~., train)
+      saveRDS(modelTREE1, "./Output/modelTREE1.rds")
+} else {
+      modelTREE1 <- readRDS("./Output/modelTREE1.rds")
+}
+
+```
+
+I estimate in-sample-error as the proportion of cases miss-classified, i.e., those out of the diagonal of the confusion Matrix. 
+```{r, echo=TRUE, eval=TRUE, cache=TRUE}
+ConfMatTREE1 <-as.matrix(table(train$classe, predict(modelTREE1, train, type="vector")))
+ISerrorRF1 <- 1 - sum(diag(ConfMatTREE1))/sum(ConfMatTREE1)
+```
+I get miss-classification rate of `r paste0(round(ISerrorRF1*100,2), "%")`.
+
+In a prior attempt to use classification trees, I found perfect classification in the training set, due to the use of the variable X (identification of the case, or row number) as the only predictor. This lead to the deletion of the pseudo identification variables from the train set described above.
+
+Before further exploring the possibilities of classification trees, I will try a random forest algorithm.
+
+
+####*2. Random Forest*
+
+```{r, echo=TRUE, eval=FALSE, tidy=TRUE}
+modelRF1 <- randomForest(classe ~., train, importance=TRUE)
+``` 
+
+```{r, echo=FALSE, eval=TRUE, cache=TRUE, tidy=TRUE}
+set.seed(999)
+if (!file.exists("./Output/modelRF1.rds")) {
+      modelRF1 <- randomForest(classe ~., train, importance=TRUE)
+      saveRDS(modelRF1, "./Output/modelRF1.rds")
+} else {
+      modelRF1 <- readRDS("./Output/modelRF1.rds")     
+}
+modelRF1
+```
+The out-of-sample estimate of error rate is `r paste0(round(modelRF1$err.rate[500]*100,2), "%")`. The random forest algorithm includes in built cross-validation, since it creates 500 trees with subsamples (resamples with replacement) leaving out around one third of the sample size for each tree, which is later used for cross-validation. That is why the algorithm provides an estimation of OOB or out-of-sample estimate of error rate.
+
+Nevertheless, I get an independent out-of-sample estimate of error rate by applying the model to the validation set.
+
+```{r, echo=TRUE, eval=TRUE, tidy=TRUE, cache=TRUE}
+ConfMatRF1 <- confusionMatrix(valid$classe, predict(modelRF1, valid))
+OOSerrorRF1 <- 1 - ConfMatRF1$overall[[1]]
+```
+Now the estimated out-of-sample error rate is `r paste0(round(OOSerrorRF1*100, 2), "%")`.
+
+I could choose to tune the model by selecting the most important features, identified thanks to the parameter *importance=TRUE* and the *varImpPlot* function. For example, the following code selects the 12 most important features, according to the *Mean Decrease Accuracy* measure and plug them into a new version of the model.
+
+
+```{r, echo=TRUE, eval=FALSE, tidy=TRUE}
+varImpPlot(modelRF1, n.var=12, main="Variable importance for modelRF1")
+importance <- as.data.frame(modelRF1$importance)
+selectedFeatures <- rownames(importance[order(importance$MeanDecreaseAccuracy, 
+                                              decreasing = TRUE),])[1:12]
+modelRF1b <- randomForest(classe ~., train[,c("classe", selectedFeatures)],
+                          importance=TRUE)
+```
+
+```{r, echo=FALSE, eval=TRUE, cache=TRUE, tidy=TRUE}
+varImpPlot(modelRF1, n.var=12, main="Variable importance for modelRF1")
+importance <- as.data.frame(modelRF1$importance)
+selectedFeatures <- rownames(importance[order(importance$MeanDecreaseAccuracy, 
+                                              decreasing = TRUE),])[1:12]
+if (!file.exists("./Output/modelRF1b.rds")) {
+      modelRF1b <- randomForest(classe ~., train[,c("classe", selectedFeatures)], importance=TRUE)
+      saveRDS(modelRF1b, "./Output/modelRF1b.rds")
+} else {
+      modelRF1b <- readRDS("./Output/modelRF1b.rds")     
+}
+
+# Prediction on validation set
+ConfMatRF1b <- confusionMatrix(valid$classe, predict(modelRF1b, valid))
+OOSerrorRF1b <- 1 - ConfMatRF1b$overall[[1]]
+```
+
+
+By doing this we gain in speed and loose in accuracy: now the estimated out-of-sample error rate is `r paste0(round(modelRF1b$err.rate[500]*100, 2), "%")`; and that computed using the confusion matrix is `r paste0(round(OOSerrorRF1b*100, 2), "%")`. 
+
+Therefore, I decide to keep the original random forest model, with all the features of the dataset, which provides an out-of-sample error rate of `r paste0(round(OOSerrorRF1*100, 2), "%")`.
+
+
+The final step is to pass the model to the test set, which produces correct classification in the 20 cases.
+
+
+
+
